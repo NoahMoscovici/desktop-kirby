@@ -1,7 +1,7 @@
 import tkinter as tk
 import os
 
-from input_lib import mouse_position, get_active_window, set_active_window
+from utils import mouse_position, get_active_window, set_active_window
 from time import time
 from tkinter import Menu, PhotoImage
 from random import randint, choice, seed
@@ -24,9 +24,18 @@ class MainApp(tk.Tk):
         # play action instance variables
         self.action = "Idle"
         self.action_start_time = time()
+
         self.walk_direction = ""
         self.walk_frame = 0
         self.walk_speed = 400  # low is actually fast here
+
+        self.fly_frame = 0
+        self.fly_speed = 400
+
+        self.falling = False
+        self.ground_level = 105
+        self.fall_frame = 0
+        self.fall_speed = 400
 
         # init
         super().__init__()
@@ -70,6 +79,10 @@ class MainApp(tk.Tk):
         self.sprite_label.pack()
 
     def main_loop(self):
+        # check quit
+        if self.state == "Quit":
+            raise KeyboardInterrupt
+
         # this is ran every frame (~10,000 times a second)
         self.lift()
         self.update()
@@ -85,16 +98,35 @@ class MainApp(tk.Tk):
             self.last_frame_time = time()
 
         # update frame count
+        self.update_motion_frames()
+
+        # check if should be falling
+        if (
+            self.winfo_y() < self.winfo_screenheight() - self.ground_level
+            and self.action not in ["Fly", "Eat Cursor", "Drag Window"]
+        ):
+            self.falling = True
+
+        if not self.falling:
+            if self.state == "Play":
+                self.play_state()
+            elif self.state == "Sleep":
+                self.sleep_state()
+        else:
+            self.fall()
+
+    def update_motion_frames(self):
         if self.walk_frame == self.walk_speed:
             self.walk_frame = 0
         self.walk_frame += 1
 
-        if self.state == "Play":
-            self.play_state()
-        elif self.state == "Sleep":
-            self.sleep_state()
-        elif self.state == "Quit":
-            raise KeyboardInterrupt
+        if self.fly_frame == self.fly_speed:
+            self.fly_frame = 0
+        self.fly_frame += 1
+
+        if self.fall_frame == self.fall_speed:
+            self.fall_frame = 0
+        self.fall_frame += 1
 
     def play_state(self):
         # set seed so action continuity is retained
@@ -109,7 +141,7 @@ class MainApp(tk.Tk):
                 "Idle",
                 # "Eat Cursor",
                 # "Drag Window",
-                # "Fly",
+                "Fly",
                 "Walk",
             ])
             print(f"Doing action: {self.action}")
@@ -130,7 +162,37 @@ class MainApp(tk.Tk):
             pass
 
         elif self.action == "Fly":
-            pass
+            # choose random x and y coordinate on screen to fly to
+            target = (randint(100, self.winfo_screenwidth() - 100),
+                      randint(120, self.winfo_screenheight() - 100))
+            dist_to_target = (abs(target[0] - self.winfo_x()),
+                              abs(target[1] - self.winfo_y()))
+            # check if at target
+            if all([d < 100 for d in dist_to_target]):
+                self.action = ""
+                self.walk_direction = ""
+            # find vector to get there
+            divisor = min(dist_to_target)
+            if divisor == 0:
+                divisor = max(dist_to_target)
+
+            vector_to_target = (
+                int((target[0] - self.winfo_x()) / divisor),
+                int((target[1] - self.winfo_y()) / divisor)
+            )
+            # enforce speed limit
+            vector_to_target = [sorted([-3, v, 3])[1]
+                                for v in vector_to_target]
+
+            self.walk_direction = (
+                "Left" if vector_to_target[0] < 0 else "Right"
+            )
+            # fly to location
+            if self.fly_frame == 1:
+                self.place_at(
+                    self.winfo_x()+vector_to_target[0],
+                    self.winfo_y()+vector_to_target[1]
+                )
 
         elif self.action == "Walk":
             # choose random x coordinate on screen to walk to
@@ -150,7 +212,19 @@ class MainApp(tk.Tk):
     def sleep_state(self):
         pass
 
+    def fall(self):
+        # check if still should be falling
+        if self.winfo_y() > self.winfo_screenheight() - self.ground_level:
+            self.falling = False
+            return
+
+        if self.fall_frame == 1:
+            self.place_at(self.winfo_x(), self.winfo_y() + 1)
+
     def next_sprite_frame(self):
+        def fall_frame():
+            print("falling")
+
         def idle_frame():
             self.current_idle_frame += 1
             # reset current frame if at end of animation
@@ -178,6 +252,10 @@ class MainApp(tk.Tk):
             self.sprite_label.configure(
                 image=self.walk_right_frames[self.current_walk_right_frame])
 
+        if self.falling:
+            fall_frame()
+            return
+
         if self.action == "Idle":
             idle_frame()
         elif self.action == "Walk":
@@ -196,7 +274,7 @@ class MainApp(tk.Tk):
         self.wm_attributes("-transparentcolor", "black")
         # place window starting at bottom right of screen
         self.place_at(self.winfo_screenwidth() - 100,
-                      self.winfo_screenheight() - 105)
+                      self.winfo_screenheight() - self.ground_level)
         # set my window id
         self.lift()
         self.my_window_id = get_active_window()
@@ -215,6 +293,9 @@ class MainApp(tk.Tk):
 
     def end_drag(self, _):
         set_active_window(self.other_window_id)
+        # check if falling
+        if self.winfo_y() < self.winfo_screenheight() - self.ground_level:
+            self.falling = True
 
     def drag_window(self, event):
         self.geometry(f"+{event.x_root-self.dx}+{event.y_root-self.dy}")

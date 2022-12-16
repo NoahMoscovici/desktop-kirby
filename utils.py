@@ -3,7 +3,7 @@ from ctypes import windll, Structure, c_long, byref
 """
 NOTE: I have no idea what most of this code does,
 it's yoinked from StackOverflow and solves a lot of
-user input stuff without needing external libraries.
+python utility stuff without needing external libraries.
 """
 
 
