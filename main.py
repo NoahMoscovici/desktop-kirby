@@ -1,101 +1,106 @@
 import tkinter as tk
-import os
 
-from utils import mouse_position, get_active_window, set_active_window
-from time import time
-from tkinter import Menu, PhotoImage
+from time import time, sleep
 from random import randint, choice, seed
+from sys import platform
+from os import listdir
+
+import lib.utils as utils
+import lib.helpers as helpers
+
+
+if platform == "darwin":
+    PLATFORM = "MAC"
+if platform in ["win32", "win64"]:
+    PLATFORM = "WINDOWS"
 
 
 class MainApp(tk.Tk):
     def __init__(self):
-        self.menu: Menu
+        self.menu: tk.Menu
         self.dx: int
         self.dy: int
+        self.frame_num = 0
+
+        self.drag_window_stage: int
 
         self.my_window_id: int
-        self.other_window_id = get_active_window()
-
-        self.last_frame_time = time()
-        self.time_between_frames = 0.05
+        self.other_window_id = utils.get_active_window()
+        self.second_window = None
 
         self.state = "Play"
+        self.sleeping = False
 
         # play action instance variables
         self.action = "Idle"
         self.action_start_time = time()
 
-        self.walk_direction = ""
-        self.walk_frame = 0
-        self.walk_speed = 400  # low is actually fast here
-
-        self.fly_frame = 0
-        self.fly_speed = 400
+        # for speeds, low = fast
+        self.movement_direction = ""
+        self.movement_speed = 10
 
         self.falling = False
-        self.ground_level = 105
-        self.fall_frame = 0
-        self.fall_speed = 400
+
+        if PLATFORM == "WINDOWS":
+            self.ground_level = 105
+        if PLATFORM == "MAC":
+            self.ground_level = 70
+
+        if PLATFORM == "MAC":
+            self.movement_speed = int(self.movement_speed / 4)
 
         # init
         super().__init__()
 
-        self.config_window()
-        self.bind_actions()
-        self.add_menu()
-
-        folder = os.path.dirname(os.path.realpath(__file__))
-
-        # add idle frames
-        self.idle_frame_count = 40
-        self.current_idle_frame = 0
-        self.idle_frames = [
-            PhotoImage(file=f"{folder}\\idle.gif",
-                       format=f"gif -index {i}")
-            for i in range(self.idle_frame_count)
-        ]
-
-        # add walk left frames
-        self.walk_left_frame_count = 20
-        self.current_walk_left_frame = 0
-        self.walk_left_frames = [
-            PhotoImage(file=f"{folder}\\walk left.gif",
-                       format=f"gif -index {i}")
-            for i in range(self.walk_left_frame_count)
-        ]
-
-        # add walk right frames
-        self.walk_right_frame_count = 20
-        self.current_walk_right_frame = 0
-        self.walk_right_frames = [
-            PhotoImage(file=f"{folder}\\walk right.gif",
-                       format=f"gif -index {i}")
-            for i in range(self.walk_right_frame_count)
-        ]
+        # add sprite frames
+        self.sprite_frame = 0
+        self.frames = {}
+        folder = helpers.get_sub_directory("animations")
+        for name in [
+            n.strip().replace(".gif", "")
+            for n in listdir(folder)
+        ]:
+            count, current, frames = helpers.init_sprite_frames(name)
+            self.frames[name.split("|")[0].strip()] = {
+                "count": count,
+                "current": current,
+                "frames": frames
+            }
 
         # define sprite label
         self.sprite_label = tk.Label(
-            self, image=self.idle_frames[0], bg="black")
+            self, image=self.frames["idle"]["frames"][0], bg="white")
         self.sprite_label.pack()
+
+        self.config_window()
+        self.bind_actions()
+        self.add_menu()
 
     def main_loop(self):
         # check quit
         if self.state == "Quit":
             raise KeyboardInterrupt
 
-        # this is ran every frame (~10,000 times a second)
+        if self.second_window:
+            self.second_window.lift(self)
         self.lift()
         self.update()
+        if self.second_window:
+            self.second_window.update()
 
         # store active windows to switch to if needed
-        a_win = get_active_window()
+        a_win = utils.get_active_window()
         if a_win not in (self.other_window_id, self.my_window_id):
             self.other_window_id = a_win
 
-        # update sprite frame
-        if time() - self.last_frame_time > self.time_between_frames:
+        # update frame num
+        self.frame_num += 1
+        if self.frame_num == 60:
+            self.frame_num = 0
+
+        # update sprite frame every other frame
+        if self.frame_num % 2 == 0:
             self.next_sprite_frame()
-            self.last_frame_time = time()
 
         # update frame count
         self.update_motion_frames()
@@ -103,7 +108,10 @@ class MainApp(tk.Tk):
         # check if should be falling
         if (
             self.winfo_y() < self.winfo_screenheight() - self.ground_level
-            and self.action not in ["Fly", "Eat Cursor", "Drag Window"]
+            and (
+                self.state == "Play"
+                and self.action not in ["Fly", "Eat Cursor", "Drag Window"]
+            )
         ):
             self.falling = True
 
@@ -116,19 +124,15 @@ class MainApp(tk.Tk):
             self.fall()
 
     def update_motion_frames(self):
-        if self.walk_frame == self.walk_speed:
-            self.walk_frame = 0
-        self.walk_frame += 1
-
-        if self.fly_frame == self.fly_speed:
-            self.fly_frame = 0
-        self.fly_frame += 1
-
-        if self.fall_frame == self.fall_speed:
-            self.fall_frame = 0
-        self.fall_frame += 1
+        if self.sprite_frame == self.movement_speed:
+            self.sprite_frame = 0
+        self.sprite_frame += 1
 
     def play_state(self):
+        # reset sleep state if necesarry
+        if self.sleeping:
+            self.sleep_sleeping = False
+
         # set seed so action continuity is retained
         seed(str(self.action_start_time))
 
@@ -140,13 +144,15 @@ class MainApp(tk.Tk):
             self.action = choice([
                 "Idle",
                 # "Eat Cursor",
-                # "Drag Window",
+                "Drag Window",
                 "Fly",
                 "Walk",
             ])
             print(f"Doing action: {self.action}")
             # reset start time
             self.action_start_time = time()
+            # reset animation frame counter
+            self.sprite_frame = 0
 
         elif self.action == "Idle":
             limit = randint(2, 10)
@@ -155,62 +161,123 @@ class MainApp(tk.Tk):
                 self.action = ""
 
         elif self.action == "Eat Cursor":
-            pos = mouse_position()
+            pos = utils.mouse_position()
             print(pos["x"], pos["y"])
 
         elif self.action == "Drag Window":
-            pass
+            if self.second_window:
+                if self.drag_window_stage == 1:
+                    # fly to window corner
+                    target = (
+                        self.second_window.winfo_x() +
+                        self.second_window.winfo_width() - self.winfo_width(),
+                        self.second_window.winfo_y() - self.winfo_height() / 2
+                    )
+                    at_target = helpers.fly_to_target(self, target, t_range=10)
+                    if at_target:
+                        self.drag_window_stage = 2
+
+                elif self.drag_window_stage == 2:
+                    # drag window on screen
+                    self.place_at(
+                        self,
+                        self.winfo_x() + 1,
+                        self.winfo_y()
+                    )
+                    self.place_at(
+                        self.second_window,
+                        self.second_window.winfo_x() + 1,
+                        self.second_window.winfo_y()
+                    )
+                    # fix buggy movement on mac
+                    if PLATFORM == "MAC":
+                        if self.winfo_x() == -2:
+                            self.place_at(
+                                self,
+                                self.winfo_x() + 2,
+                                self.winfo_y()
+                            )
+                        if self.second_window.winfo_x() == -2:
+                            self.place_at(
+                                self.second_window,
+                                self.second_window.winfo_x() + 2,
+                                self.second_window.winfo_y()
+                            )
+
+            else:
+                def reset_second_window():
+                    self.second_window.destroy()
+                    self.second_window = None
+                    self.action = ""
+
+                # define window
+                self.second_window = tk.Toplevel(self)
+                self.second_window.title("")
+                self.second_window.protocol(
+                    "WM_DELETE_WINDOW",
+                    reset_second_window
+                )
+                # TODO: remove visual bug using withdraw
+                #self.second_window.wm_withdraw()
+                self.second_window.geometry("200x200")
+                self.second_window.update()
+                self.place_at(
+                    self.second_window,
+                    -1 * self.second_window.winfo_width() + 1,
+                    randint(100, self.winfo_screenheight() - 100)
+                )
+                # set resizable
+                self.second_window.resizable(False, False)
+                # set on top of other windows
+                self.second_window.wm_attributes("-topmost", 1)
+
+                # image
+                folder = helpers.get_sub_directory("images")
+                files = [f for f in listdir(folder)]
+                self.second_window.image = tk.PhotoImage(
+                    file=folder + choice(files)
+                )
+                tk.Label(
+                    self.second_window,
+                    image=self.second_window.image,
+                    bg="black"
+                ).pack()
+                # set focus back
+                utils.set_active_window(self.other_window_id)
+
+                # set drag window stage
+                self.drag_window_stage = 1
 
         elif self.action == "Fly":
             # choose random x and y coordinate on screen to fly to
             target = (randint(100, self.winfo_screenwidth() - 100),
                       randint(120, self.winfo_screenheight() - 100))
-            dist_to_target = (abs(target[0] - self.winfo_x()),
-                              abs(target[1] - self.winfo_y()))
+            at_target = helpers.fly_to_target(self, target, t_range=10)
             # check if at target
-            if all([d < 100 for d in dist_to_target]):
+            if at_target:
                 self.action = ""
-                self.walk_direction = ""
-            # find vector to get there
-            divisor = min(dist_to_target)
-            if divisor == 0:
-                divisor = max(dist_to_target)
-
-            vector_to_target = (
-                int((target[0] - self.winfo_x()) / divisor),
-                int((target[1] - self.winfo_y()) / divisor)
-            )
-            # enforce speed limit
-            vector_to_target = [sorted([-3, v, 3])[1]
-                                for v in vector_to_target]
-
-            self.walk_direction = (
-                "Left" if vector_to_target[0] < 0 else "Right"
-            )
-            # fly to location
-            if self.fly_frame == 1:
-                self.place_at(
-                    self.winfo_x()+vector_to_target[0],
-                    self.winfo_y()+vector_to_target[1]
-                )
+                self.movement_direction = ""
 
         elif self.action == "Walk":
             # choose random x coordinate on screen to walk to
             target = randint(100, self.winfo_screenwidth() - 100)
+            at_target = helpers.walk_to_target(self, target, t_range=5)
             # check if at target
-            if abs(target - self.winfo_x()) < 5:
+            if at_target:
                 self.action = ""
-                self.walk_direction = ""
-            # find vector to get there
-            move = 1 if target - self.winfo_x() > 0 else -1
-            self.walk_direction = "Left" if move < 0 else "Right"
-
-            # walk to that location
-            if self.walk_frame == 1:
-                self.place_at(self.winfo_x()+move, self.winfo_y())
+                self.movement_direction = ""
 
     def sleep_state(self):
-        pass
+        if not self.sleeping:
+            # choose random x coordinate on screen to walk to
+            target = self.winfo_screenwidth() - 100
+            at_target = helpers.walk_to_target(self, target, t_range=5)
+            # check if at target
+            if at_target:
+                self.movement_direction = ""
+                self.sleeping = True
+        else:
+            pass
 
     def fall(self):
         # check if still should be falling
@@ -218,52 +285,47 @@ class MainApp(tk.Tk):
             self.falling = False
             return
 
-        if self.fall_frame == 1:
-            self.place_at(self.winfo_x(), self.winfo_y() + 1)
+        self.place_at(
+            self,
+            self.winfo_x(),
+            self.winfo_y() + self.movement_speed
+        )
 
     def next_sprite_frame(self):
-        def fall_frame():
-            print("falling")
-
-        def idle_frame():
-            self.current_idle_frame += 1
-            # reset current frame if at end of animation
-            if self.current_idle_frame == self.idle_frame_count:
-                self.current_idle_frame = 0
-            # change sprite
-            self.sprite_label.configure(
-                image=self.idle_frames[self.current_idle_frame])
-
-        def walk_left_frame():
-            self.current_walk_left_frame += 1
-            # reset current frame if at end of animation
-            if self.current_walk_left_frame == self.walk_left_frame_count:
-                self.current_walk_left_frame = 0
-            # change sprite
-            self.sprite_label.configure(
-                image=self.walk_left_frames[self.current_walk_left_frame])
-
-        def walk_right_frame():
-            self.current_walk_right_frame += 1
-            # reset current frame if at end of animation
-            if self.current_walk_right_frame == self.walk_right_frame_count:
-                self.current_walk_right_frame = 0
-            # change sprite
-            self.sprite_label.configure(
-                image=self.walk_right_frames[self.current_walk_right_frame])
-
         if self.falling:
-            fall_frame()
+            helpers.go_to_next_sprite_frame(self, self.frames["falling"])
             return
 
-        if self.action == "Idle":
-            idle_frame()
-        elif self.action == "Walk":
-            # check direction
-            if self.walk_direction == "Left":
-                walk_left_frame()
-            elif self.walk_direction == "Right":
-                walk_right_frame()
+        if self.state == "Sleep":
+            if self.movement_direction != "":
+                helpers.go_to_next_sprite_frame(
+                    self,
+                    self.frames[f"walk {self.movement_direction.lower()}"]
+                )
+            else:
+                helpers.go_to_next_sprite_frame(self, self.frames["sleep"])
+
+        elif self.state == "Play":
+            if self.action == "Idle":
+                helpers.go_to_next_sprite_frame(self, self.frames["idle"])
+            elif self.action == "Fly":
+                if self.movement_direction != "":
+                    helpers.go_to_next_sprite_frame(
+                        self,
+                        self.frames[f"fly {self.movement_direction.lower()}"]
+                    )
+            elif self.action == "Walk":
+                if self.movement_direction != "":
+                    helpers.go_to_next_sprite_frame(
+                        self,
+                        self.frames[f"walk {self.movement_direction.lower()}"]
+                    )
+            elif self.action == "Drag Window":
+                # TODO: create drag window animations
+                pass
+            elif self.action == "Eat Cursor":
+                # TODO: create eat cursor animations
+                pass
 
     def config_window(self):
         # disable closing
@@ -271,16 +333,25 @@ class MainApp(tk.Tk):
         # keep on top of other windows
         self.wm_attributes("-topmost", 1)
         # replace white with transparent
-        self.wm_attributes("-transparentcolor", "black")
+        if PLATFORM == "WINDOWS":
+            self.wm_attributes("-transparentcolor", "white")
+        if PLATFORM == "MAC":
+            self.wm_attributes("-transparent", True)
+            self.attributes("-alpha", 0.8)
+            self.sprite_label.config(bg="#0f0f0f")
+            # TODO: figure out how to make transparent background
         # place window starting at bottom right of screen
-        self.place_at(self.winfo_screenwidth() - 100,
-                      self.winfo_screenheight() - self.ground_level)
+        self.place_at(
+            self,
+            self.winfo_screenwidth() - 100,
+            self.winfo_screenheight() - self.ground_level
+        )
         # set my window id
         self.lift()
-        self.my_window_id = get_active_window()
+        self.my_window_id = utils.get_active_window()
 
-    def place_at(self, x, y):
-        self.geometry(f"+{x}+{y}")
+    def place_at(self, obj, x, y):
+        obj.geometry(f"+{x}+{y}")
 
     def bind_actions(self):
         # allow to be moved
@@ -292,37 +363,42 @@ class MainApp(tk.Tk):
         self.dx, self.dy = event.x, event.y
 
     def end_drag(self, _):
-        set_active_window(self.other_window_id)
-        # check if falling
-        if self.winfo_y() < self.winfo_screenheight() - self.ground_level:
-            self.falling = True
+        utils.set_active_window(self.other_window_id)
 
     def drag_window(self, event):
+        # disable if doing non draggable actions
+        if self.action == "Drag Window" and self.drag_window_stage == 2:
+            return
         self.geometry(f"+{event.x_root-self.dx}+{event.y_root-self.dy}")
 
     def add_menu(self):
+        if PLATFORM == "WINDOWS":
+            font_size = 8
+        if PLATFORM == "MAC":
+            font_size = 12
+
         def menu_popup(event):
             try:
                 self.menu.tk_popup(event.x_root, event.y_root)
             finally:
                 self.menu.grab_release()
-                set_active_window(self.other_window_id)
+                utils.set_active_window(self.other_window_id)
 
-        self.menu = Menu(self, tearoff=0)
+        self.menu = tk.Menu(self, tearoff=0)
         self.menu.add_command(
             label="go to sleep",
-            font=("Corbel", 8),
+            font=("Corbel", font_size),
             command=lambda: self._change_state("Sleep")
         )
         self.menu.add_command(
             label="play!",
-            font=("Corbel", 8),
+            font=("Corbel", font_size),
             command=lambda: self._change_state("Play")
         )
         self.menu.add_separator()
         self.menu.add_command(
             label="bye bye",
-            font=("Corbel", 8),
+            font=("Corbel", font_size),
             command=lambda: self._change_state("Quit")
         )
 
@@ -331,26 +407,34 @@ class MainApp(tk.Tk):
         self.menu.add_separator()
         self.menu.add_command(
             label="dev: walk",
+            font=("Corbel", font_size),
             command=lambda: set_action("Walk")
         )
         self.menu.add_command(
             label="dev: fly",
+            font=("Corbel", font_size),
             command=lambda: set_action("Fly")
         )
         self.menu.add_command(
             label="dev: idle",
+            font=("Corbel", font_size),
             command=lambda: set_action("Idle")
         )
         self.menu.add_command(
             label="dev: eat cursor",
+            font=("Corbel", font_size),
             command=lambda: set_action("Eat Cursor")
         )
         self.menu.add_command(
             label="dev: drag window",
+            font=("Corbel", font_size),
             command=lambda: set_action("Drag Window")
         )
 
-        self.bind("<Button-3>", menu_popup)
+        if PLATFORM == "WINDOWS":
+            self.bind("<Button-3>", menu_popup)
+        if PLATFORM == "MAC":
+            self.bind("<Button-2>", menu_popup)
 
     def _change_state(self, new_state):
         self.state = new_state
@@ -361,6 +445,8 @@ if __name__ == "__main__":
     while True:
         try:
             app.main_loop()
+            # ~60 frames a second
+            sleep(0.0166667)
         except KeyboardInterrupt:
             print("byebye.")
             break
