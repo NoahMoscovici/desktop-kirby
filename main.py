@@ -103,7 +103,9 @@ class MainApp(tk.Tk):
             self.next_sprite_frame()
 
         # update frame count
-        self.update_motion_frames()
+        if self.sprite_frame == self.movement_speed:
+            self.sprite_frame = 0
+        self.sprite_frame += 1
 
         # check if should be falling
         if (
@@ -111,6 +113,9 @@ class MainApp(tk.Tk):
             and (
                 self.state == "Play"
                 and self.action not in ["Fly", "Eat Cursor", "Drag Window"]
+            ) or
+            (
+                self.state == "Sleep"
             )
         ):
             self.falling = True
@@ -122,11 +127,6 @@ class MainApp(tk.Tk):
                 self.sleep_state()
         else:
             self.fall()
-
-    def update_motion_frames(self):
-        if self.sprite_frame == self.movement_speed:
-            self.sprite_frame = 0
-        self.sprite_frame += 1
 
     def play_state(self):
         # reset sleep state if necesarry
@@ -141,13 +141,18 @@ class MainApp(tk.Tk):
             # reset start time
             self.action_start_time = time()
             # choose new action
-            self.action = choice([
-                "Idle",
-                # "Eat Cursor",
-                "Drag Window",
-                "Fly",
-                "Walk",
-            ])
+            action_rng = randint(0, 99)
+            action_weightings = {
+                "Idle": range(0, 40),
+                "Eat Cursor": range(40, 50),
+                "Drag Window": range(50, 55),
+                "Fly": range(55, 70),
+                "Walk": range(70, 100)
+            }
+            for action in action_weightings:
+                if action_rng in action_weightings[action]:
+                    self.action = action
+                    break
             print(f"Doing action: {self.action}")
             # reset start time
             self.action_start_time = time()
@@ -156,13 +161,24 @@ class MainApp(tk.Tk):
 
         elif self.action == "Idle":
             limit = randint(2, 10)
-            # do nothing for 2-10 seconds
+            # do nothing for some time
             if time() - self.action_start_time > limit:
                 self.action = ""
 
         elif self.action == "Eat Cursor":
-            pos = utils.mouse_position()
-            print(pos["x"], pos["y"])
+            # fly near mouse position,
+            # determine which side of mouse to fly to based on
+            # if on left or right side
+            m_pos = utils.mouse_position()
+            x_offset = (
+                100 if m_pos["x"] < self.winfo_x()
+                else -100 - self.winfo_width()
+            )
+            target = (m_pos["x"] + x_offset, m_pos["y"] - 40)
+            at_target = helpers.fly_to_target(self, target, t_range=5)
+            if at_target:
+                # TODO: lock mouse movement, move mouse towards kirby
+                pass
 
         elif self.action == "Drag Window":
             if self.second_window:
@@ -203,28 +219,35 @@ class MainApp(tk.Tk):
                                 self.second_window.winfo_x() + 2,
                                 self.second_window.winfo_y()
                             )
-
+                    if self.second_window.winfo_x() == randint(
+                        0,
+                        (
+                            self.winfo_screenwidth() -
+                            self.second_window.winfo_width()
+                        )
+                    ):
+                        self.drag_window_stage = 0
+                        self.second_window = None
+                        self.action = ""
             else:
-                def reset_second_window():
-                    self.second_window.destroy()
-                    self.second_window = None
-                    self.action = ""
-
                 # define window
-                self.second_window = tk.Toplevel(self)
+                # TODO: disable minimizing/closing windows while being dragged
+                # TODO: prevent dragging of window while being dragged
+                self.second_window = tk.Toplevel()
                 self.second_window.title("")
-                self.second_window.protocol(
-                    "WM_DELETE_WINDOW",
-                    reset_second_window
-                )
-                # TODO: remove visual bug using withdraw
-                #self.second_window.wm_withdraw()
+                # TODO: remove visual bug of appearing before moving offscreen
+                # possibly use transparency for windows?
+                # TODO: dynamically do geometry of window from img size
                 self.second_window.geometry("200x200")
                 self.second_window.update()
                 self.place_at(
                     self.second_window,
                     -1 * self.second_window.winfo_width() + 1,
-                    randint(100, self.winfo_screenheight() - 100)
+                    randint(
+                        0,
+                        self.winfo_screenheight() -
+                        self.second_window.winfo_height()
+                    )
                 )
                 # set resizable
                 self.second_window.resizable(False, False)
@@ -269,7 +292,6 @@ class MainApp(tk.Tk):
 
     def sleep_state(self):
         if not self.sleeping:
-            # choose random x coordinate on screen to walk to
             target = self.winfo_screenwidth() - 100
             at_target = helpers.walk_to_target(self, target, t_range=5)
             # check if at target
