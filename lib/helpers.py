@@ -17,7 +17,7 @@ def init_sprite_frames(name):
         else ""
     )
     folder = path.dirname(path.realpath(__file__)).split(f"{divisor}lib")[0]
-    lis = [s.strip() for s in name.split("|")]
+    lis = [s.strip() for s in name.split("-")]
 
     if len(lis) == 2:
         name, frame_count = lis
@@ -28,7 +28,7 @@ def init_sprite_frames(name):
     frames = [
         PhotoImage(
             file=f"{folder}{divisor}animations"
-            f"{divisor}{name} | {frame_count}.gif",
+            f"{divisor}{name} - {frame_count}.gif",
             format=f"gif -index {i}"
         )
         for i in range(int(frame_count))
@@ -117,9 +117,10 @@ def fly_to_target(obj, target, t_range):
             v * obj.movement_speed for v in vector_to_target
         ]
 
-    obj.movement_direction = (
-        "Left" if vector_to_target[0] < 0 else "Right"
-    )
+    if vector_to_target[0] != 0:
+        obj.movement_direction = (
+            "Left" if vector_to_target[0] < 0 else "Right"
+        )
 
     # fly to location
     if obj.sprite_frame == 1:

@@ -21,8 +21,13 @@ class MainApp(tk.Tk):
         self.dx: int
         self.dy: int
         self.frame_num = 0
+        self.mouse_lock_pos = None
 
-        self.drag_window_stage: int
+        self.dragging = False
+
+        self.drag_window_stage = 0
+        self.eat_cursor_stage = 0
+        self.eat_cursor_timer = None
 
         self.my_window_id: int
         self.other_window_id = utils.get_active_window()
@@ -35,19 +40,15 @@ class MainApp(tk.Tk):
         self.action = "Idle"
         self.action_start_time = time()
 
-        # for speeds, low = fast
         self.movement_direction = ""
-        self.movement_speed = 10
+        self.movement_speed = 1
 
         self.falling = False
 
         if PLATFORM == "WINDOWS":
-            self.ground_level = 105
+            self.ground_level = 65  # fullscreen
         if PLATFORM == "MAC":
             self.ground_level = 70
-
-        if PLATFORM == "MAC":
-            self.movement_speed = int(self.movement_speed / 4)
 
         # init
         super().__init__()
@@ -61,7 +62,7 @@ class MainApp(tk.Tk):
             for n in listdir(folder)
         ]:
             count, current, frames = helpers.init_sprite_frames(name)
-            self.frames[name.split("|")[0].strip()] = {
+            self.frames[name.split("-")[0].strip()] = {
                 "count": count,
                 "current": current,
                 "frames": frames
@@ -82,11 +83,10 @@ class MainApp(tk.Tk):
             raise KeyboardInterrupt
 
         if self.second_window:
-            self.second_window.lift(self)
+            self.second_window.update()
+
         self.lift()
         self.update()
-        if self.second_window:
-            self.second_window.update()
 
         # store active windows to switch to if needed
         a_win = utils.get_active_window()
@@ -100,7 +100,10 @@ class MainApp(tk.Tk):
 
         # update sprite frame every other frame
         if self.frame_num % 2 == 0:
-            self.next_sprite_frame()
+            try:
+                self.next_sprite_frame()
+            except KeyError as e:
+                print(e)
 
         # update frame count
         if self.sprite_frame == self.movement_speed:
@@ -110,28 +113,35 @@ class MainApp(tk.Tk):
         # check if should be falling
         if (
             self.winfo_y() < self.winfo_screenheight() - self.ground_level
-            and (
-                self.state == "Play"
-                and self.action not in ["Fly", "Eat Cursor", "Drag Window"]
-            ) or
+            and
             (
-                self.state == "Sleep"
+                (
+                    self.state == "Play"
+                    and self.action not in ["Fly", "Eat Cursor", "Drag Window"]
+                ) or
+                (
+                    self.state == "Sleep"
+                ) or
+                (
+                    self.state == "Quit"
+                )
             )
         ):
             self.falling = True
 
-        if not self.falling:
-            if self.state == "Play":
-                self.play_state()
-            elif self.state == "Sleep":
-                self.sleep_state()
-        else:
-            self.fall()
+        if not self.dragging:
+            if not self.falling:
+                if self.state == "Play":
+                    self.play_state()
+                elif self.state == "Sleep":
+                    self.sleep_state()
+            else:
+                self.fall()
 
     def play_state(self):
         # reset sleep state if necesarry
         if self.sleeping:
-            self.sleep_sleeping = False
+            self.sleeping = False
 
         # set seed so action continuity is retained
         seed(str(self.action_start_time))
@@ -144,10 +154,10 @@ class MainApp(tk.Tk):
             action_rng = randint(0, 99)
             action_weightings = {
                 "Idle": range(0, 40),
-                "Eat Cursor": range(40, 50),
-                "Drag Window": range(50, 55),
-                "Fly": range(55, 70),
-                "Walk": range(70, 100)
+                "Walk": range(40, 65),
+                "Fly": range(65, 85),
+                "Eat Cursor": range(85, 95),
+                "Drag Window": range(95, 100),
             }
             for action in action_weightings:
                 if action_rng in action_weightings[action]:
@@ -166,110 +176,88 @@ class MainApp(tk.Tk):
                 self.action = ""
 
         elif self.action == "Eat Cursor":
-            # fly near mouse position,
-            # determine which side of mouse to fly to based on
-            # if on left or right side
-            m_pos = utils.mouse_position()
-            x_offset = (
-                100 if m_pos["x"] < self.winfo_x()
-                else -100 - self.winfo_width()
-            )
-            target = (m_pos["x"] + x_offset, m_pos["y"] - 40)
-            at_target = helpers.fly_to_target(self, target, t_range=5)
-            if at_target:
-                # TODO: lock mouse movement, move mouse towards kirby
-                pass
+            if self.eat_cursor_stage == 0:
+                # fly near mouse position
+                mouse_pos = utils.mouse_position()
+                x_offset = (
+                    100 if mouse_pos["x"] < self.winfo_x()
+                    else -100 - self.winfo_width()
+                )
+                # overwrite offset if at edge of screen
+                if mouse_pos["x"] < 100:
+                    x_offset = 100
+                if mouse_pos["x"] > self.winfo_screenwidth() - 200:
+                    x_offset = -100
+
+                target = (
+                    mouse_pos["x"] +
+                    x_offset, mouse_pos["y"] - 40
+                )
+                at_target = helpers.fly_to_target(self, target, t_range=5)
+                if at_target:
+                    self.eat_cursor_stage = 1
+                    self.mouse_lock_pos = utils.mouse_position()
+
+            if self.eat_cursor_stage == 1:
+                # lock mouse movement, wait 3 seconds
+                if not self.eat_cursor_timer:
+                    self.eat_cursor_timer = time()
+                if time() - self.eat_cursor_timer > 3:
+                    self.eat_cursor_stage = 2
+                    self.eat_cursor_timer = None
+                    self.config(cursor="none")
+                utils.move_mouse(self.mouse_lock_pos)
+
+            if self.eat_cursor_stage == 2:
+                # TODO: turn left/right/straight depending on where mouse is
+
+                # set timer to steadily increase speed
+                if not self.eat_cursor_timer:
+                    self.eat_cursor_timer = time()
+
+                speed = int(time() - self.eat_cursor_timer) * 2
+
+                # suck in cursor
+                target = (
+                    self.winfo_x() + self.winfo_width() / 2,
+                    self.winfo_y() + self.winfo_height() / 2
+                )
+                at_target = utils.move_mouse_to_target(target, speed or 1)
+                if at_target:
+                    self.eat_cursor_stage = 3
+                    self.eat_cursor_timer = None
+                    self.mouse_lock_pos = utils.mouse_position()
+
+            if self.eat_cursor_stage == 3:
+                # hold for 3 seconds, reset
+                if not self.eat_cursor_timer:
+                    self.eat_cursor_timer = time()
+
+                if time() - self.eat_cursor_timer > 3:
+                    self.config(cursor="hand2")
+                    self.eat_cursor_stage = 0
+                    self.eat_cursor_timer = None
+                    self.action = ""
+                    return
+
+                utils.move_mouse(self.mouse_lock_pos)
 
         elif self.action == "Drag Window":
-            if self.second_window:
-                if self.drag_window_stage == 1:
-                    # fly to window corner
-                    target = (
-                        self.second_window.winfo_x() +
-                        self.second_window.winfo_width() - self.winfo_width(),
-                        self.second_window.winfo_y() - self.winfo_height() / 2
-                    )
-                    at_target = helpers.fly_to_target(self, target, t_range=10)
-                    if at_target:
-                        self.drag_window_stage = 2
+            if not self.second_window:
+                self.drag_window_stage = 0
+                self.movement_direction = ""
 
-                elif self.drag_window_stage == 2:
-                    # drag window on screen
-                    self.place_at(
-                        self,
-                        self.winfo_x() + 1,
-                        self.winfo_y()
-                    )
-                    self.place_at(
-                        self.second_window,
-                        self.second_window.winfo_x() + 1,
-                        self.second_window.winfo_y()
-                    )
-                    # fix buggy movement on mac
-                    if PLATFORM == "MAC":
-                        if self.winfo_x() == -2:
-                            self.place_at(
-                                self,
-                                self.winfo_x() + 2,
-                                self.winfo_y()
-                            )
-                        if self.second_window.winfo_x() == -2:
-                            self.place_at(
-                                self.second_window,
-                                self.second_window.winfo_x() + 2,
-                                self.second_window.winfo_y()
-                            )
-                    if self.second_window.winfo_x() == randint(
-                        0,
-                        (
-                            self.winfo_screenwidth() -
-                            self.second_window.winfo_width()
-                        )
-                    ):
-                        self.drag_window_stage = 0
-                        self.second_window = None
-                        self.action = ""
-            else:
-                # define window
-                # TODO: disable minimizing/closing windows while being dragged
-                # TODO: prevent dragging of window while being dragged
-                self.second_window = tk.Toplevel()
-                self.second_window.title("")
-                # TODO: remove visual bug of appearing before moving offscreen
-                # possibly use transparency for windows?
-                # TODO: dynamically do geometry of window from img size
-                self.second_window.geometry("200x200")
-                self.second_window.update()
-                self.place_at(
-                    self.second_window,
-                    -1 * self.second_window.winfo_width() + 1,
-                    randint(
-                        0,
-                        self.winfo_screenheight() -
-                        self.second_window.winfo_height()
-                    )
-                )
-                # set resizable
-                self.second_window.resizable(False, False)
-                # set on top of other windows
-                self.second_window.wm_attributes("-topmost", 1)
+            try:
+                self.drag_window_action()
 
-                # image
-                folder = helpers.get_sub_directory("images")
-                files = [f for f in listdir(folder)]
-                self.second_window.image = tk.PhotoImage(
-                    file=folder + choice(files)
-                )
-                tk.Label(
-                    self.second_window,
-                    image=self.second_window.image,
-                    bg="black"
-                ).pack()
-                # set focus back
-                utils.set_active_window(self.other_window_id)
-
-                # set drag window stage
-                self.drag_window_stage = 1
+            # catch closing of window as it is dragged
+            except Exception as e:
+                if str(e)[:32] == "bad window path name \".!toplevel":
+                    self.second_window = None
+                    self.action = ""
+                    self.drag_window_stage = 0
+                else:
+                    raise e
 
         elif self.action == "Fly":
             # choose random x and y coordinate on screen to fly to
@@ -279,7 +267,6 @@ class MainApp(tk.Tk):
             # check if at target
             if at_target:
                 self.action = ""
-                self.movement_direction = ""
 
         elif self.action == "Walk":
             # choose random x coordinate on screen to walk to
@@ -289,6 +276,131 @@ class MainApp(tk.Tk):
             if at_target:
                 self.action = ""
                 self.movement_direction = ""
+
+    def drag_window_action(self):
+        if self.drag_window_stage == 0:
+            # define window
+            self.second_window = tk.Toplevel()
+
+            # find image to use
+            folder = helpers.get_sub_directory("images")
+            files = [f for f in listdir(folder) if f[-4:] == ".png"]
+            # reset seed for choice
+            seed(time())
+            self.second_window.image = tk.PhotoImage(
+                file=folder + choice(files)
+            )
+
+            self.second_window.title("")
+            self.second_window.geometry(
+                str(self.second_window.image.width()) +
+                "x" +
+                str(self.second_window.image.height())
+            )
+            self.second_window.wm_attributes("-alpha", 0)
+            self.second_window.update()
+            self.place_at(
+                self.second_window,
+                -1 * self.second_window.winfo_width() - 10,
+                randint(
+                    100,
+                    self.winfo_screenheight() -
+                    self.second_window.winfo_height()
+                )
+            )
+            self.second_window.wm_attributes("-alpha", 1)
+
+            # set resizable
+            self.second_window.resizable(False, False)
+            self.second_window.transient(self)
+
+            # set on top of other windows
+            self.second_window.wm_attributes("-topmost", 1)
+
+            # set image
+            self.second_window.iconbitmap(folder + "favicon.ico")
+            tk.Label(
+                self.second_window,
+                image=self.second_window.image,
+                bg="grey"
+            ).pack()
+            # set focus back
+            utils.set_active_window(self.other_window_id)
+            # set drag window stage
+            self.drag_window_stage = 1
+
+        elif self.drag_window_stage == 1:
+            # fly to window corner
+            target = (
+                self.second_window.winfo_x() +
+                self.second_window.winfo_width() - self.winfo_width(),
+                self.second_window.winfo_y() - self.winfo_height() / 2
+            )
+            at_target = helpers.fly_to_target(
+                self, target, t_range=10)
+            if at_target:
+                self.drag_window_stage = 2
+
+        elif self.drag_window_stage == 2:
+            target = (
+                self.second_window.winfo_x() +
+                self.second_window.winfo_width() - self.winfo_width(),
+                self.second_window.winfo_y() - self.winfo_height() / 2
+            )
+            at_target = helpers.fly_to_target(
+                self, target, t_range=5)
+            if not at_target:
+                self.drag_window_stage = 1
+
+            # drag window on screen
+            # drag slowly
+            if self.frame_num % 4 == 0:
+                self.place_at(
+                    self,
+                    self.winfo_x() + 1,
+                    self.winfo_y()
+                )
+                self.place_at(
+                    self.second_window,
+                    self.second_window.winfo_x() + 1,
+                    self.second_window.winfo_y()
+                )
+            # fix buggy movement on mac
+            if PLATFORM == "MAC":
+                if self.winfo_x() == -2:
+                    self.place_at(
+                        self,
+                        self.winfo_x() + 2,
+                        self.winfo_y()
+                    )
+                if self.second_window.winfo_x() == -2:
+                    self.place_at(
+                        self.second_window,
+                        self.second_window.winfo_x() + 2,
+                        self.second_window.winfo_y()
+                    )
+            if self.second_window.winfo_x() >= randint(
+                0,
+                (
+                    self.winfo_screenwidth() -
+                    self.second_window.winfo_width()
+                )
+            ):
+                self.drag_window_stage = 3
+
+        elif self.drag_window_stage == 3:
+            # fly a little away from window
+            target = (
+                self.second_window.winfo_x() +
+                self.second_window.winfo_width() + 100,
+                self.second_window.winfo_y() - 50
+            )
+            at_target = helpers.fly_to_target(
+                self, target, t_range=10)
+            if at_target:
+                self.drag_window_stage = 0
+                self.second_window = None
+                self.action = ""
 
     def sleep_state(self):
         if not self.sleeping:
@@ -305,17 +417,49 @@ class MainApp(tk.Tk):
         # check if still should be falling
         if self.winfo_y() > self.winfo_screenheight() - self.ground_level:
             self.falling = False
+            # place back on ground
+            self.place_at(
+                self,
+                self.winfo_x(),
+                self.winfo_screenheight() - self.ground_level
+            )
+            self.movement_direction = ""
             return
+
+        # only fall every other frame
+        if self.frame_num % 2 == 0:
+            if self.movement_direction == "Left":
+                x_offset = -1
+            elif self.movement_direction == "Right":
+                x_offset = 1
+            else:
+                x_offset = 0
+        else:
+            x_offset = 0
+        # overwrite offset if at edge
+        if (
+            self.winfo_x() < 0
+            or self.winfo_x() > self.winfo_screenwidth() - 100
+        ):
+            x_offset = 0
+            self.movement_direction = ""
 
         self.place_at(
             self,
-            self.winfo_x(),
+            self.winfo_x() + x_offset,
             self.winfo_y() + self.movement_speed
         )
 
     def next_sprite_frame(self):
         if self.falling:
-            helpers.go_to_next_sprite_frame(self, self.frames["falling"])
+            if self.movement_direction:
+                helpers.go_to_next_sprite_frame(
+                    self,
+                    self.frames[f"falling {self.movement_direction.lower()}"]
+                )
+            else:
+                helpers.go_to_next_sprite_frame(
+                    self, self.frames["falling"])
             return
 
         if self.state == "Sleep":
@@ -331,25 +475,50 @@ class MainApp(tk.Tk):
             if self.action == "Idle":
                 helpers.go_to_next_sprite_frame(self, self.frames["idle"])
             elif self.action == "Fly":
-                if self.movement_direction != "":
+                if self.movement_direction == "":
+                    return
+                helpers.go_to_next_sprite_frame(
+                    self,
+                    self.frames[f"fly {self.movement_direction.lower()}"]
+                )
+            elif self.action == "Walk":
+                if self.movement_direction == "":
+                    return
+                helpers.go_to_next_sprite_frame(
+                    self,
+                    self.frames[f"walk {self.movement_direction.lower()}"]
+                )
+            elif self.action == "Drag Window":
+                if self.drag_window_stage in (1, 3):
                     helpers.go_to_next_sprite_frame(
                         self,
                         self.frames[f"fly {self.movement_direction.lower()}"]
                     )
-            elif self.action == "Walk":
-                if self.movement_direction != "":
+                if self.drag_window_stage == 2:
                     helpers.go_to_next_sprite_frame(
                         self,
-                        self.frames[f"walk {self.movement_direction.lower()}"]
+                        self.frames["drag"]
                     )
-            elif self.action == "Drag Window":
-                # TODO: create drag window animations
-                pass
             elif self.action == "Eat Cursor":
-                # TODO: create eat cursor animations
-                pass
+                if self.eat_cursor_stage == 0:
+                    # fly to cursor
+                    helpers.go_to_next_sprite_frame(
+                        self,
+                        self.frames[f"fly {self.movement_direction.lower()}"]
+                    )
+                if self.eat_cursor_stage == 1:
+                    # wait 3 seconds
+                    pass
+                if self.eat_cursor_stage == 2:
+                    # suck in
+                    pass
+                if self.eat_cursor_stage == 3:
+                    # wait 3 seconds
+                    pass
 
     def config_window(self):
+        # hand cursor
+        self.config(cursor="hand2")
         # disable closing
         self.overrideredirect(1)
         # keep on top of other windows
@@ -383,15 +552,20 @@ class MainApp(tk.Tk):
 
     def start_drag(self, event):
         self.dx, self.dy = event.x, event.y
+        self.dragging = True
 
     def end_drag(self, _):
         utils.set_active_window(self.other_window_id)
+        self.dragging = False
 
     def drag_window(self, event):
         # disable if doing non draggable actions
-        if self.action == "Drag Window" and self.drag_window_stage == 2:
+        if self.action == "Drag Window" and self.drag_window_stage >= 2:
             return
-        self.geometry(f"+{event.x_root-self.dx}+{event.y_root-self.dy}")
+
+        # move location
+        new_x, new_y = event.x_root-self.dx, event.y_root-self.dy
+        self.geometry(f"+{new_x}+{new_y}")
 
     def add_menu(self):
         if PLATFORM == "WINDOWS":
@@ -467,8 +641,8 @@ if __name__ == "__main__":
     while True:
         try:
             app.main_loop()
-            # ~60 frames a second
-            sleep(0.0166667)
+            FPS = 100
+            sleep(1 / FPS)
         except KeyboardInterrupt:
             print("byebye.")
             break
