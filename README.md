@@ -1,6 +1,17 @@
-# Desktop Kirby
+# Desktop Kirby <img src="animations/sleep%20-%20120.gif" alt="Sleeping Kirby" width="60" style="vertical-align: middle;" />
 
-A delightful desktop companion inspired by Desktop Goose, featuring Kirby! This application creates an interactive Kirby that floats around your desktop, performing various cute animations and interactions.
+A delightful desktop companion inspired by Desktop Goose, featuring Kirby! This application creates an interactive Kirby that floats around your desktop, performing various cute animations and interactions. 
+
+[📥 Download Windows Installer](install/desktop%20kirby%20installer.exe)
+
+[📋 Installation Guide](#installation-windows)
+
+[💻 Development Setup](#development-setup)
+
+## Examples
+
+![Example clip 1](examples/clip1.gif)
+![Example clip 2](examples/clip2.gif)
 
 ## Features
 
@@ -17,7 +28,7 @@ A delightful desktop companion inspired by Desktop Goose, featuring Kirby! This 
 
 ### Option 1: Using the Installer
 
-1. Download the installer from the `/install` folder: `desktop kirby installer.exe`
+1. Download the installer from the `/install` folder: [desktop kirby installer.exe](install/desktop%20kirby%20installer.exe)
 2. Run the installer executable
 3. Follow the installation wizard instructions
 4. Launch Desktop Kirby from your Start Menu or desktop shortcut

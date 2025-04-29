@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+clip1.gif filter=lfs diff=lfs merge=lfs -text
+clip2.gif filter=lfs diff=lfs merge=lfs -text
